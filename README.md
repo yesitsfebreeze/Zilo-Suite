@@ -13,7 +13,7 @@ odin build . -out:zs
 
 ## Usage
 
-Drop a `.zilo-suite` file in your project root, then run:
+Drop a `.zs` file in your project root, then run:
 
 ```
 zs                               # check → test → build (all entries)
@@ -40,7 +40,7 @@ zs -test -packages='+lib,+core'  # test only lib and core
 
 ## Config format
 
-Create a `.zilo-suite` file in your project root:
+Create a `.zs` file in your project root:
 
 ```
 # Comments start with #
@@ -78,9 +78,9 @@ For each `entry:` path, suite recursively walks subdirectories. Any directory co
 
 ## How it works
 
-1. Reads `.zilo-suite` from the working directory
+1. Reads `.zs` from the working directory
 2. Hashes all `.odin` files in each entry directory (FNV-64a)
-3. Compares against stored stamps (`.zilo-suite-stamps` next to the binary)
+3. Compares against stored stamps (`.zs.stamps` next to the binary)
 4. Skips entries whose hash matches and artifact exists on disk
 5. Runs stale entries in parallel threads: check → test → build
 6. Displays a live ANSI table with per-entry status
