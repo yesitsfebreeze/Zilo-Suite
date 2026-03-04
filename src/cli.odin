@@ -38,7 +38,7 @@ suite_usage :: proc() {
 	fmt.println("  zs -test -packages='+lib,+core'  test only lib and core")
 }
 
-parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [dynamic]string, exclude_patterns: [dynamic]string, root_dir: string, config_file: string, debug_build: bool, force_build: bool, show_help: bool, ok: bool) {
+parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [dynamic]string, exclude_patterns: [dynamic]string, root_dir: string, config_file: string, debug_build: bool, force_build: bool, show_help: bool, error_msg: string, ok: bool) {
 	plan             = SuitePlan{}
 	include_patterns = make([dynamic]string)
 	exclude_patterns = make([dynamic]string)
@@ -47,6 +47,7 @@ parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [d
 	debug_build      = false
 	force_build      = false
 	show_help        = false
+	error_msg        = ""
 
 	got_mode := false
 
@@ -62,7 +63,9 @@ parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [d
 
 		// ─── mode flags ───
 		if a == "-all" {
-			if got_mode { return plan, include_patterns, exclude_patterns, "", "", false, false, false, false }
+			if got_mode {
+				return plan, include_patterns, exclude_patterns, "", "", false, false, false, "cannot combine -all, -check, -test: choose one mode", false
+			}
 			plan.steps[0] = .Check
 			plan.steps[1] = .Test
 			plan.steps[2] = .Build
@@ -71,14 +74,18 @@ parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [d
 			continue
 		}
 		if a == "-check" {
-			if got_mode { return plan, include_patterns, exclude_patterns, "", "", false, false, false, false }
+			if got_mode {
+				return plan, include_patterns, exclude_patterns, "", "", false, false, false, "cannot combine -all, -check, -test: choose one mode", false
+			}
 			plan.steps[0] = .Check
 			plan.step_count = 1
 			got_mode = true
 			continue
 		}
 		if a == "-test" {
-			if got_mode { return plan, include_patterns, exclude_patterns, "", "", false, false, false, false }
+			if got_mode {
+				return plan, include_patterns, exclude_patterns, "", "", false, false, false, "cannot combine -all, -check, -test: choose one mode", false
+			}
 			plan.steps[0] = .Check
 			plan.steps[1] = .Test
 			plan.step_count = 2
@@ -114,7 +121,9 @@ parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [d
 		if strings.has_prefix(a, "-packages=") {
 			raw := a[len("-packages="):]
 			inc, exc, pok := parse_package_filter(raw)
-			if !pok { return plan, include_patterns, exclude_patterns, "", "", false, false, false, false }
+			if !pok {
+				return plan, include_patterns, exclude_patterns, "", "", false, false, false, fmt.tprintf("invalid -packages filter: '%s' (use +name or -name, comma-separated)", raw), false
+			}
 			for v in inc { append(&include_patterns, v) }
 			for v in exc { append(&exclude_patterns, v) }
 			delete(inc)
@@ -123,11 +132,11 @@ parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [d
 		}
 
 		// ─── unknown ───
-		return plan, include_patterns, exclude_patterns, "", "", false, false, false, false
+		return plan, include_patterns, exclude_patterns, "", "", false, false, false, fmt.tprintf("unknown flag: %s", a), false
 	}
 
 	if show_help {
-		return plan, include_patterns, exclude_patterns, root_dir, config_file, debug_build, force_build, true, true
+		return plan, include_patterns, exclude_patterns, root_dir, config_file, debug_build, force_build, true, "", true
 	}
 
 	// default: -all
@@ -150,7 +159,7 @@ parse_cli_args :: proc(args: []string) -> (plan: SuitePlan, include_patterns: [d
 		}
 	}
 
-	return plan, include_patterns, exclude_patterns, root_dir, config_file, debug_build, force_build, false, true
+	return plan, include_patterns, exclude_patterns, root_dir, config_file, debug_build, force_build, false, "", true
 }
 
 // parse_package_filter parses the value of -packages=VALUE.

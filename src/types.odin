@@ -12,7 +12,7 @@ BLUE   :: "\x1b[34m"
 
 LOG_FILE_NAME    :: ".zs.log"
 STAMPS_FILE_NAME :: ".zs.stamps"
-SUITE_CONFIG     :: ".zs.suite"
+SUITE_CONFIG     :: ".zs.config"
 
 // --- Config types ------------------------------------------------------------
 

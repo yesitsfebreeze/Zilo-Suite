@@ -24,6 +24,7 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 	all_entries, collections, config_ok := load_suite_config(clean_root_dir, config_file)
 	if !config_ok {
 		config_display := config_file if len(config_file) > 0 else SUITE_CONFIG
+		fmt.eprintf("%serror:%s could not read %s in %s\n", RED, RESET, config_display, clean_root_dir)
 		fmt.sbprintf(&b, "fail: could not read %s in %s\n", config_display, clean_root_dir)
 		log := strings.clone(strings.to_string(b))
 		os.write_entire_file(log_path, transmute([]u8)log)
@@ -51,6 +52,7 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 
 	if len(filtered) == 0 {
 		if has_includes {
+			fmt.eprintf("%serror:%s no entries matched include filter\n", RED, RESET)
 			fmt.sbprintf(&b, "fail: no entries matched include filter\n")
 			log := strings.clone(strings.to_string(b))
 			os.write_entire_file(log_path, transmute([]u8)log)
@@ -59,6 +61,7 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 			fmt.eprintln("No packages found, skipping suite.")
 			suite_exit(0)
 		} else {
+			fmt.eprintf("%serror:%s .zs has no entries\n", RED, RESET)
 			fmt.sbprintf(&b, "fail: .zs has no entries\n")
 			log := strings.clone(strings.to_string(b))
 			os.write_entire_file(log_path, transmute([]u8)log)
