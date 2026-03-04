@@ -16,6 +16,7 @@ foreign libc {
 	pclose  :: proc(stream: rawptr) -> i32 ---
 	fgets   :: proc(str: [^]u8, n: i32, stream: rawptr) -> [^]u8 ---
 	feof    :: proc(stream: rawptr) -> i32 ---
+	system  :: proc(command: cstring) -> i32 ---
 }
 
 @(private="file")
@@ -91,4 +92,19 @@ execute_command_unix :: proc(cmd: string) -> (output: string, success: bool) {
 	exit_code := pclose(pipe)
 	out := strings.to_string(builder)
 	return _finalize_command_result(cmd, out, exit_code)
+}
+
+// execute_command_interactive runs a command with full TTY access.
+// Use this for programs that need raw terminal mode (TUIs, editors, etc.).
+// Does not capture output - the program writes directly to the console.
+execute_command_interactive :: proc(cmd: string) -> bool {
+	if _has_forbidden_command_chars(cmd) {
+		fmt.eprintln("[command failed: invalid command input]")
+		return false
+	}
+	c_cmd := strings.clone_to_cstring(cmd)
+	defer delete(c_cmd)
+
+	exit_code := system(c_cmd)
+	return exit_code == 0
 }

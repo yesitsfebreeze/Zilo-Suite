@@ -7,7 +7,7 @@ import "core:strings"
 import "core:thread"
 import "core:time"
 
-run_incremental_suite :: proc(root_dir: string, config_file: string, include_patterns: [dynamic]string, exclude_patterns: [dynamic]string, plan: SuitePlan, debug_build: bool, force_build: bool, run_after: bool) {
+run_incremental_suite :: proc(root_dir: string, config_file: string, include_patterns: [dynamic]string, exclude_patterns: [dynamic]string, plan: SuitePlan, debug_build: bool, force_build: bool, run_after: bool, run_args: [dynamic]string) {
 	exe_path       := os.args[0]
 	exe_dir        := filepath.dir(exe_path)
 	clean_root_dir := filepath.clean(root_dir)
@@ -279,10 +279,30 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 
 		fmt.printf("\n%s── running %s ──%s\n\n", BLUE, entry.name, RESET)
 
-		// Execute the main program.
-		output, success := execute_command(main_exe)
-		fmt.print(output)
-		delete(output)
+		// Build command with optional arguments.
+		cmd: string
+		if len(run_args) > 0 {
+			b := strings.builder_make()
+			strings.write_string(&b, main_exe)
+			for arg in run_args {
+				strings.write_string(&b, " ")
+				// Quote args containing spaces.
+				if strings.contains(arg, " ") {
+					strings.write_string(&b, "\"")
+					strings.write_string(&b, arg)
+					strings.write_string(&b, "\"")
+				} else {
+					strings.write_string(&b, arg)
+				}
+			}
+			cmd = strings.to_string(b)
+		} else {
+			cmd = main_exe
+		}
+		defer if len(run_args) > 0 { delete(cmd) }
+
+		// Execute the main program with TTY access for interactive programs.
+		success := execute_command_interactive(cmd)
 		if !success { suite_exit(1) }
 	}
 
