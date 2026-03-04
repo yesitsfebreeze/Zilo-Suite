@@ -98,8 +98,8 @@ run_entry_worker :: proc(t: ^thread.Thread) {
 		status       = .Failed,
 		detail       = "failed",
 		update_stamp = false,
-		stamp_key    = entry.path,
-		stamp_hash   = "",
+		stamp_key    = strings.clone(entry.path),
+		stamp_hash   = strings.clone(data.current_hash),
 	}
 
 	for i in 0..<plan.step_count {
@@ -184,21 +184,14 @@ run_entry_worker :: proc(t: ^thread.Thread) {
 			}
 			delete(build_out)
 
-			joined_target := filepath.join({data.root_dir, entry.path})
-			abs_target, abs_ok := filepath.abs(joined_target)
-			if !abs_ok { abs_target = joined_target } else { delete(joined_target) }
-			current_hash := hash_source_dir(abs_target)
-			delete(abs_target)
-
 			tr_pass(data, .Build, "")
 			fmt.sbprintf(&log, "ok %s: build\n", entry.name)
 			fmt.sbprintf(&log, "complete %s\n", entry.name)
 			result.status       = .Passed
 			result.detail       = "built"
+			result.update_stamp = true
 			result.log_output   = strings.clone(strings.to_string(log))
 			strings.builder_destroy(&log)
-			result.update_stamp = true
-			result.stamp_hash   = current_hash
 			data.results^[data.idx] = result
 			tr_done(data)
 			return
@@ -207,9 +200,10 @@ run_entry_worker :: proc(t: ^thread.Thread) {
 
 	// ── All steps passed (no build step) ─────────────────────────────────────
 	fmt.sbprintf(&log, "complete %s\n", entry.name)
-	result.status     = .Passed
-	result.detail     = "ok"
-	result.log_output = strings.clone(strings.to_string(log))
+	result.status       = .Passed
+	result.detail       = "ok"
+	result.update_stamp = true
+	result.log_output   = strings.clone(strings.to_string(log))
 	strings.builder_destroy(&log)
 	data.results^[data.idx] = result
 	tr_done(data)

@@ -70,52 +70,79 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 	// ── Stamp check + worker launch ────────────────────────────────────────────
 	stale_indices      := make([dynamic]int)
 	stale_table_starts := make([dynamic]int)
+	stale_hashes       := make([dynamic]string)
 	defer delete(stale_indices)
 	defer delete(stale_table_starts)
+	defer delete(stale_hashes)
 
 	table_rows := make([dynamic]TableRow)
+	failed_any := false
 
 	for i in 0..<len(filtered) {
 		entry := filtered[i]
 
-		joined_target := filepath.join({clean_root_dir, entry.path})
-		abs_target, abs_ok := filepath.abs(joined_target)
-		if !abs_ok { abs_target = joined_target } else { delete(joined_target) }
+		// Check if entry directory exists.
+		entry_dir := filepath.join({clean_root_dir, entry.path})
+		dir_exists := os.exists(entry_dir)
+		delete(entry_dir)
 
-		current_hash := hash_source_dir(abs_target)
-		defer delete(current_hash)
-		delete(abs_target)
-
-		stored_hash := ""
-		if entry.path in stamps { stored_hash = stamps[entry.path] }
-
-		// Only skip based on stamps for entries that produce artifacts.
-		is_artifact := plan_has_step(plan, .Build)
-		if !force_build && is_artifact && current_hash == stored_hash && len(stored_hash) > 0 {
-			// Verify the artifact is actually on disk; if not, the stamp is stale.
-			when ODIN_OS == .Windows { artifact_ext :: ".exe" } else { artifact_ext :: "" }
-			artifact_path := filepath.join({clean_root_dir, filepath.dir(entry.path), "bin",
-				strings.concatenate({entry.name, artifact_ext})})
-			artifact_ok := os.exists(artifact_path)
-			delete(artifact_path)
-			if artifact_ok {
-				fmt.sbprintf(&b, "skip %s: content unchanged\n", entry.name)
-				row := TableRow{suite = strings.clone(entry.name)}
-				row.check_state = .Skipped if !plan_has_step(plan, .Check) else .Passed
-				row.check_info  = "cached" if plan_has_step(plan, .Check) else ""
-				row.test_state  = .Skipped if !plan_has_step(plan, .Test)  else .Passed
-				row.test_info   = "cached" if plan_has_step(plan, .Test)  else ""
-				row.build_state = .Skipped if !plan_has_step(plan, .Build) else .Passed
-				row.build_info  = "cached" if plan_has_step(plan, .Build) else ""
-				append(&table_rows, row)
-				continue
-			}
-			fmt.sbprintf(&b, "stale %s: artifact missing, rebuilding\n", entry.name)
+		if !dir_exists {
+			// Directory doesn't exist - mark as failed and continue.
+			fmt.sbprintf(&b, "error %s: directory does not exist\n", entry.path)
+			row := TableRow{suite = strings.clone(entry.name)}
+			row.check_state = .Failed if plan_has_step(plan, .Check) else .Skipped
+			row.check_info  = "missing"
+			row.test_state  = .Skipped
+			row.build_state = .Skipped
+			row.errors      = strings.clone(fmt.tprintf("directory '%s' not found", entry.path))
+			append(&table_rows, row)
+			failed_any = true
+			continue
 		}
 
-		// Pre-allocate one Pending row for this stale entry; worker updates in place.
+		// Compute hash including entry source + all collections.
+		current_hash := hash_with_collections(clean_root_dir, entry.path, collections[:])
+
+		// Check if stamp matches - if so, skip this entry entirely.
+		stored_hash := stamps[entry.path] if entry.path in stamps else ""
+		is_cached := !force_build && len(stored_hash) > 0 && stored_hash == current_hash
+
+		// For build entries, also verify artifact exists.
+		if is_cached && plan_has_step(plan, .Build) && (entry.kind == .Build || entry.kind == .Shared) {
+			when ODIN_OS == .Windows { artifact_ext :: ".exe" } else { artifact_ext :: "" }
+			artifact_path: string
+			if entry.kind == .Shared {
+				artifact_path = filepath.join({clean_root_dir, entry.path, "bin",
+					strings.concatenate({entry.name, suite_lib_ext()})})
+			} else {
+				artifact_path = filepath.join({clean_root_dir, filepath.dir(entry.path), "bin",
+					strings.concatenate({entry.name, artifact_ext})})
+			}
+			if !os.exists(artifact_path) {
+				is_cached = false
+				fmt.sbprintf(&b, "stale %s: artifact missing\n", entry.name)
+			}
+			delete(artifact_path)
+		}
+
+		if is_cached {
+			// Entry unchanged - skip entirely and show as cached.
+			row := TableRow{suite = strings.clone(entry.name)}
+			row.check_state = .Passed if plan_has_step(plan, .Check) else .Skipped
+			row.check_info  = "cached" if plan_has_step(plan, .Check) else ""
+			row.test_state  = .Passed if plan_has_step(plan, .Test)  else .Skipped
+			row.test_info   = "cached" if plan_has_step(plan, .Test)  else ""
+			row.build_state = .Passed if plan_has_step(plan, .Build) else .Skipped
+			row.build_info  = "cached" if plan_has_step(plan, .Build) else ""
+			append(&table_rows, row)
+			delete(current_hash)
+			continue
+		}
+
+		// Entry needs work - add to stale list with Pending state.
 		append(&stale_indices, i)
 		append(&stale_table_starts, len(table_rows))
+		append(&stale_hashes, current_hash)
 		{
 			row := TableRow{suite = strings.clone(entry.name)}
 			row.check_state = .Pending if plan_has_step(plan, .Check) else .Skipped
@@ -124,8 +151,6 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 			append(&table_rows, row)
 		}
 	}
-
-	failed_any := false
 
 	if len(stale_indices) > 0 {
 		// Build a stale-only entries slice so worker idx maps 1-to-1 to results[idx].
@@ -151,10 +176,10 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 				entries          = stale_entries,
 				results          = &results,
 				root_dir         = clean_root_dir,
-
 				collections      = collections[:],
 				plan             = plan,
 				debug_build      = debug_build,
+				current_hash     = stale_hashes[j],
 				table_rows       = &table_rows,
 				table_rows_start = stale_table_starts[j],
 				done_flag        = &done_flags[j],
@@ -190,14 +215,15 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 		for t in threads { thread.join(t); thread.destroy(t) }
 
 		for j in 0..<len(stale_indices) {
-			i      := stale_indices[j]
-			entry  := filtered[i]
 			result := results[j]
 
 			if result.status == .Failed { failed_any = true }
+			// Save stamp if all steps passed.
 			if result.update_stamp {
-				stamps[strings.clone(entry.path)] = strings.clone(result.stamp_hash)
+				stamps[strings.clone(result.stamp_key)] = strings.clone(result.stamp_hash)
 			}
+			delete(result.stamp_key)
+			delete(result.stamp_hash)
 			fmt.sbprintf(&b, "%s", result.log_output)
 			delete(result.log_output)
 		}

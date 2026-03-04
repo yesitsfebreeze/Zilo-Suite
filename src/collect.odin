@@ -226,6 +226,49 @@ hash_source_dir :: proc(target: string) -> string {
 	return fmt.aprintf("%016x", h)
 }
 
+// hash_with_collections computes a combined hash of the entry's source directory
+// and all collection directories. This ensures that if any dependency (collection)
+// changes, the entry is considered stale.
+hash_with_collections :: proc(root_dir: string, entry_path: string, collections: []CollectionDecl) -> string {
+	b := strings.builder_make()
+	defer strings.builder_destroy(&b)
+
+	// Hash the entry's own source.
+	joined_target := filepath.join({root_dir, entry_path})
+	abs_target, abs_ok := filepath.abs(joined_target)
+	if !abs_ok { abs_target = joined_target } else { delete(joined_target) }
+	entry_hash := hash_source_dir(abs_target)
+	delete(abs_target)
+	strings.write_string(&b, entry_hash)
+	strings.write_byte(&b, 0)
+	delete(entry_hash)
+
+	// Hash each collection (sorted by name for determinism).
+	col_names := make([dynamic]string, 0, len(collections))
+	defer delete(col_names)
+	for c in collections { append(&col_names, c.name) }
+	slice.sort(col_names[:])
+
+	for col_name in col_names {
+		for c in collections {
+			if c.name == col_name {
+				col_abs := filepath.join({root_dir, c.path})
+				col_hash := hash_source_dir(col_abs)
+				delete(col_abs)
+				strings.write_string(&b, col_name)
+				strings.write_byte(&b, ':')
+				strings.write_string(&b, col_hash)
+				strings.write_byte(&b, 0)
+				delete(col_hash)
+				break
+			}
+		}
+	}
+
+	h := hash.fnv64a(transmute([]byte)strings.to_string(b))
+	return fmt.aprintf("%016x", h)
+}
+
 // _dir_has_tests_file returns true when rel_path directly contains `@tests.odin`.
 @(private)
 _dir_has_tests_file :: proc(root_dir, rel_path: string) -> bool {
@@ -242,7 +285,7 @@ _find_package_subdirs :: proc(root_dir, parent_path: string, out: ^[dynamic]stri
 	abs := filepath.join({root_dir, parent_path})
 	defer delete(abs)
 	fh, err := os.open(abs)
-	if err != 0 { return }
+	if err != nil { return }
 	defer os.close(fh)
 	infos, read_err := os.read_dir(fh, 0)
 	if read_err != nil { return }
@@ -265,7 +308,7 @@ _find_package_subdirs :: proc(root_dir, parent_path: string, out: ^[dynamic]stri
 @(private)
 _collect_odin_paths :: proc(root: string, dir: string, out: ^[dynamic]string) {
 	fh, err := os.open(dir)
-	if err != 0 { return }
+	if err != nil { return }
 	defer os.close(fh)
 
 	infos, read_err := os.read_dir(fh, 0)

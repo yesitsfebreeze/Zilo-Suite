@@ -84,9 +84,9 @@ EntryResult :: struct {
 	status:       TaskState,
 	detail:       string,
 	log_output:   string,
-	update_stamp: bool,
-	stamp_key:    string,
-	stamp_hash:   string,
+	update_stamp: bool,   // true if all steps passed, stamp should be saved
+	stamp_key:    string, // entry path
+	stamp_hash:   string, // hash of entry + collections
 }
 
 EntryWorkerData :: struct {
@@ -97,6 +97,7 @@ EntryWorkerData :: struct {
 	collections:      []CollectionDecl,
 	plan:             SuitePlan,
 	debug_build:      bool,
+	current_hash:     string,             // precomputed hash of entry + collections
 	table_rows:       ^[dynamic]TableRow, // global display rows; nil = display disabled
 	table_rows_start: int,                // index of this entry's first row
 	done_flag:        ^bool,              // set true when this entry finishes
