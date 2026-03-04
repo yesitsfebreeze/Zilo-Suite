@@ -15,6 +15,7 @@ suite_usage :: proc() {
 	fmt.println("  -all                      check -> test -> build  (default)")
 	fmt.println("  -check                    check only")
 	fmt.println("  -test                     check -> test")
+	fmt.println("  -run                      check -> test -> build -> run main")
 	fmt.println("  -debug                    pass -debug to odin build")
 	fmt.println("  -f                        force: ignore cached stamps and rebuild everything")
 	fmt.println("  -root=DIR                 project root directory (default: cwd)")
