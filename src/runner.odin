@@ -7,7 +7,7 @@ import "core:strings"
 import "core:thread"
 import "core:time"
 
-run_incremental_suite :: proc(root_dir: string, config_file: string, include_patterns: [dynamic]string, exclude_patterns: [dynamic]string, plan: SuitePlan, debug_build: bool, force_build: bool) {
+run_incremental_suite :: proc(root_dir: string, config_file: string, include_patterns: [dynamic]string, exclude_patterns: [dynamic]string, plan: SuitePlan, debug_build: bool, force_build: bool, run_after: bool) {
 	exe_path       := os.args[0]
 	exe_dir        := filepath.dir(exe_path)
 	clean_root_dir := filepath.clean(root_dir)
@@ -249,5 +249,42 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 	delete(log)
 
 	if failed_any { suite_exit(1) }
+
+	// ── Run main executable if requested ───────────────────────────────────────
+	if run_after {
+		// Find the main entry.
+		main_entry: Maybe(SuiteEntry)
+		for entry in all_entries {
+			if entry.is_main {
+				main_entry = entry
+				break
+			}
+		}
+		if main_entry == nil {
+			fmt.eprintf("%serror:%s no main entry defined (use 'main: path' in config)\n", RED, RESET)
+			suite_exit(1)
+		}
+		entry := main_entry.?
+
+		// Build the executable path.
+		when ODIN_OS == .Windows { exe_ext :: ".exe" } else { exe_ext :: "" }
+		main_exe := filepath.join({clean_root_dir, filepath.dir(entry.path), "bin",
+			strings.concatenate({entry.name, exe_ext})})
+		defer delete(main_exe)
+
+		if !os.exists(main_exe) {
+			fmt.eprintf("%serror:%s main executable not found: %s\n", RED, RESET, main_exe)
+			suite_exit(1)
+		}
+
+		fmt.printf("\n%s── running %s ──%s\n\n", BLUE, entry.name, RESET)
+
+		// Execute the main program.
+		output, success := execute_command(main_exe)
+		fmt.print(output)
+		delete(output)
+		if !success { suite_exit(1) }
+	}
+
 	suite_exit(0)
 }
