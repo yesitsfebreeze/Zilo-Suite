@@ -169,9 +169,18 @@ run_entry_test :: proc(root_dir, path: string, collections: []CollectionDecl) ->
 
 	cmd := ""
 	when ODIN_OS == .Windows {
-		cmd = strings.concatenate({"cd /d ", quoted_path, " && odin test .", col_flags, " 2>&1"})
+		cmd = strings.concatenate({
+			"cd /d ", quoted_path,
+			" && set ODIN_TEST_THREADS=0",
+			" && set ODIN_TEST_SHORT_LOGS=true",
+			" && odin test . -all-packages", col_flags, " 2>&1",
+		})
 	} else {
-		cmd = strings.concatenate({"cd ", quoted_path, " && odin test .", col_flags, " 2>&1"})
+		cmd = strings.concatenate({
+			"cd ", quoted_path,
+			" && ODIN_TEST_THREADS=0 ODIN_TEST_SHORT_LOGS=true",
+			" odin test . -all-packages", col_flags, " 2>&1",
+		})
 	}
 	output, success := execute_command(cmd)
 	delete(cmd)

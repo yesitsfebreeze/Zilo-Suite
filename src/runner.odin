@@ -70,30 +70,11 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 		suite_exit(1)
 	}
 
-	// ── Split into sub-packages and main entries ───────────────────────────────
-	sub_filtered  := make([dynamic]SuiteEntry)
-	main_filtered := make([dynamic]SuiteEntry)
-	defer delete(sub_filtered)
-	defer delete(main_filtered)
-	for entry in filtered {
-		if entry.is_sub {
-			append(&sub_filtered, entry)
-		} else {
-			append(&main_filtered, entry)
-		}
-	}
-
 	failed_any := false
 
-	// ── Phase 1: Run sub-package tests (check + test only) ─────────────────────
-	if len(sub_filtered) > 0 {
-		sub_failed := run_sub_entries(clean_root_dir, sub_filtered[:], collections[:], &stamps, plan, force_build, &b)
-		if sub_failed { failed_any = true }
-	}
-
-	// ── Phase 2: Run main entries (with table display) ─────────────────────────
-	if len(main_filtered) > 0 {
-		main_failed := run_main_entries(clean_root_dir, main_filtered[:], collections[:], &stamps, plan, debug_build, force_build, &b)
+	// ── Run all entries (with table display) ───────────────────────────────────
+	if len(filtered) > 0 {
+		main_failed := run_main_entries(clean_root_dir, filtered[:], collections[:], &stamps, plan, debug_build, force_build, &b)
 		if main_failed { failed_any = true }
 	}
 
@@ -168,164 +149,6 @@ run_incremental_suite :: proc(root_dir: string, config_file: string, include_pat
 	}
 
 	suite_exit(0)
-}
-
-// ── run_sub_entries: Run sub-package tests with simple log display ─────────────
-
-run_sub_entries :: proc(
-	root_dir:    string,
-	entries:     []SuiteEntry,
-	collections: []CollectionDecl,
-	stamps:      ^map[string]string,
-	plan:        SuitePlan,
-	force_build: bool,
-	log_builder: ^strings.Builder,
-) -> (failed: bool) {
-	if len(entries) == 0 { return false }
-
-	// Build sub-log entries and identify stale ones.
-	sub_logs     := make([]SubLogEntry, len(entries))
-	stale_indices := make([dynamic]int)
-	stale_hashes  := make([dynamic]string)
-	defer delete(stale_indices)
-	defer delete(stale_hashes)
-
-	for i in 0..<len(entries) {
-		entry := entries[i]
-		sub_logs[i] = SubLogEntry{
-			path  = entry.path,
-			state = .Pending,
-		}
-
-		// Check if directory exists.
-		entry_dir := filepath.join({root_dir, entry.path})
-		dir_exists := os.exists(entry_dir)
-		delete(entry_dir)
-
-		if !dir_exists {
-			sub_logs[i].state = .Failed
-			fmt.sbprintf(log_builder, "error %s: directory does not exist\n", entry.path)
-			failed = true
-			continue
-		}
-
-		// Check stamp.
-		current_hash := hash_with_collections(root_dir, entry.path, collections)
-		stored_hash := stamps^[entry.path] if entry.path in stamps^ else ""
-		is_cached := !force_build && len(stored_hash) > 0 && stored_hash == current_hash
-
-		if is_cached {
-			sub_logs[i].state = .Passed
-			delete(current_hash)
-			continue
-		}
-
-		append(&stale_indices, i)
-		append(&stale_hashes, current_hash)
-	}
-
-	if len(stale_indices) == 0 {
-		// All cached - just print final state.
-		print_sub_log_final(sub_logs[:])
-		delete(sub_logs)
-		return failed
-	}
-
-	// Launch workers for stale entries.
-	stale_entries := make([]SuiteEntry, len(stale_indices))
-	defer delete(stale_entries)
-	for j in 0..<len(stale_indices) {
-		stale_entries[j] = entries[stale_indices[j]]
-	}
-
-	// Sub entries only do check + test (no build).
-	sub_plan := SuitePlan{
-		steps      = {.Check, .Test, .Build},
-		step_count = 2,
-	}
-	// Override with actual plan if it has fewer steps.
-	if plan_has_step(plan, .Check) && !plan_has_step(plan, .Test) {
-		sub_plan.step_count = 1
-	} else if !plan_has_step(plan, .Check) && plan_has_step(plan, .Test) {
-		sub_plan.steps[0] = .Test
-		sub_plan.step_count = 1
-	} else if !plan_has_step(plan, .Check) && !plan_has_step(plan, .Test) {
-		// No check or test - nothing to do for subs.
-		print_sub_log_final(sub_logs[:])
-		delete(sub_logs)
-		return failed
-	}
-
-	worker_datas := make([]EntryWorkerData, len(stale_indices))
-	results      := make([]EntryResult, len(stale_indices))
-	done_flags   := make([]bool, len(stale_indices))
-	threads      := make([dynamic]^thread.Thread)
-	defer {
-		delete(threads)
-		delete(worker_datas)
-		delete(done_flags)
-	}
-
-	for j in 0..<len(stale_indices) {
-		worker_datas[j] = EntryWorkerData{
-			idx           = j,
-			entries       = stale_entries,
-			results       = &results,
-			root_dir      = root_dir,
-			collections   = collections,
-			plan          = sub_plan,
-			debug_build   = false,
-			current_hash  = stale_hashes[j],
-			table_rows    = nil,  // No table display for subs.
-			done_flag     = &done_flags[j],
-			sub_log_entry = &sub_logs[stale_indices[j]],
-		}
-
-		t := thread.create(run_entry_worker)
-		t.data = &worker_datas[j]
-		thread.start(t)
-		append(&threads, t)
-	}
-
-	// Live update loop with cycling dots.
-	tick := 0
-	print_sub_log_init(sub_logs[:])
-	fmt.printf("\x1b[?25l") // hide cursor
-	for {
-		all_done := true
-		for j in 0..<len(stale_indices) {
-			if !done_flags[j] { all_done = false; break }
-		}
-		print_sub_log_live(sub_logs[:], tick)
-		if all_done { break }
-		tick += 1
-		time.sleep(100 * time.Millisecond)
-	}
-	fmt.printf("\x1b[?25h") // restore cursor
-
-	for t in threads { thread.join(t); thread.destroy(t) }
-
-	// Process results.
-	for j in 0..<len(stale_indices) {
-		result := results[j]
-		if result.status == .Failed { failed = true }
-		if result.update_stamp {
-			stamps^[strings.clone(result.stamp_key)] = strings.clone(result.stamp_hash)
-		}
-		delete(result.stamp_key)
-		delete(result.stamp_hash)
-		fmt.sbprintf(log_builder, "%s", result.log_output)
-		delete(result.log_output)
-	}
-	delete(results)
-
-	// Erase live output and print final.
-	fmt.printf("\x1b[%dA\x1b[0J", len(sub_logs))
-	print_sub_log_final(sub_logs[:])
-	if failed { fmt.printf("\n") }
-	delete(sub_logs)
-
-	return failed
 }
 
 // ── run_main_entries: Run main entries with table display ──────────────────────
@@ -452,7 +275,6 @@ run_main_entries :: proc(
 				table_rows       = &table_rows,
 				table_rows_start = stale_table_starts[j],
 				done_flag        = &done_flags[j],
-				sub_log_entry    = nil,
 			}
 
 			t := thread.create(run_entry_worker)

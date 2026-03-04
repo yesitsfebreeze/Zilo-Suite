@@ -5,6 +5,7 @@ package suite
 RESET  :: "\x1b[0m"
 BOLD   :: "\x1b[1m"
 DIM    :: "\x1b[2m"
+STRIKE :: "\x1b[9m"
 RED    :: "\x1b[31m"
 GREEN  :: "\x1b[32m"
 YELLOW :: "\x1b[33m"
@@ -24,7 +25,6 @@ SuiteEntry :: struct {
 	name:     string,   // last path component, for display
 	nostrict: bool,     // skip -strict-style -vet when checking
 	is_main:  bool,     // true if this is the main entry (declared via main:)
-	is_sub:   bool,     // true if auto-discovered as sub-package test
 }
 
 CollectionDecl :: struct {
@@ -105,5 +105,4 @@ EntryWorkerData :: struct {
 	table_rows:       ^[dynamic]TableRow, // global display rows; nil = display disabled
 	table_rows_start: int,                // index of this entry's first row
 	done_flag:        ^bool,              // set true when this entry finishes
-	sub_log_entry:    ^SubLogEntry,       // for sub-package log display; nil = not a sub
 }

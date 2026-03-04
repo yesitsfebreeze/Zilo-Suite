@@ -181,36 +181,6 @@ load_suite_config :: proc(root_dir: string, config_file: string = "") -> (entrie
 		}
 	}
 
-	// ── Auto-discover sub-packages for every build entry ────────────────────
-	existing_paths := make(map[string]bool)
-	defer delete(existing_paths)
-	for e in entries { existing_paths[e.path] = true }
-
-	// Iterate only the entries that were explicitly declared (not the ones we append).
-	build_count := len(entries)
-	for i in 0..<build_count {
-		e := entries[i]
-		if e.kind != .Build { continue }
-
-		subdirs := make([dynamic]string)
-		_find_package_subdirs(root_dir, e.path, &subdirs, existing_paths)
-		for sub_path in subdirs {
-			if !(sub_path in existing_paths) {
-				path_clone := strings.clone(sub_path)
-				append(&entries, SuiteEntry{
-					kind     = .Test,
-					path     = path_clone,
-					name     = strings.clone(sub_path),
-					nostrict = e.nostrict,
-					is_sub   = true,
-				})
-				existing_paths[path_clone] = true
-			}
-			delete(sub_path)
-		}
-		delete(subdirs)
-	}
-
 	return entries, collections, true
 }
 
@@ -287,49 +257,6 @@ hash_with_collections :: proc(root_dir: string, entry_path: string, collections:
 
 	h := hash.fnv64a(transmute([]byte)strings.to_string(b))
 	return fmt.aprintf("%016x", h)
-}
-
-// _dir_has_tests_file returns true when rel_path directly contains `@tests.odin`.
-@(private)
-_dir_has_tests_file :: proc(root_dir, rel_path: string) -> bool {
-	abs := filepath.join({root_dir, rel_path, "@tests.odin"})
-	defer delete(abs)
-	return os.exists(abs)
-}
-
-// _find_package_subdirs walks the tree rooted at root_dir/parent_path and
-// appends (heap-allocated) relative paths for every sub-directory that
-// contains an `@tests.odin` file.  Skips directories that are already
-// declared as entries (sub-entries).  Caller must delete each string.
-@(private)
-_find_package_subdirs :: proc(root_dir, parent_path: string, out: ^[dynamic]string, entry_paths: map[string]bool) {
-	abs := filepath.join({root_dir, parent_path})
-	defer delete(abs)
-	fh, err := os.open(abs)
-	if err != nil { return }
-	defer os.close(fh)
-	infos, read_err := os.read_dir(fh, 0)
-	if read_err != nil { return }
-	defer os.file_info_slice_delete(infos)
-	for info in infos {
-		if !info.is_dir { continue }
-		sub_path := strings.concatenate({parent_path, "/", info.name})
-		if !_is_safe_suite_path(sub_path) {
-			delete(sub_path)
-			continue
-		}
-		// Skip sub-entries: directories that are already declared as entries
-		// (they need to be compiled separately and have their own entry point).
-		if sub_path in entry_paths {
-			delete(sub_path)
-			continue
-		}
-		if _dir_has_tests_file(root_dir, sub_path) {
-			append(out, strings.clone(sub_path))
-		}
-		_find_package_subdirs(root_dir, sub_path, out, entry_paths)
-		delete(sub_path)
-	}
 }
 
 @(private)
